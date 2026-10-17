@@ -1,0 +1,149 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <ESP32Servo.h>
+
+// ==================== 1. 基础设置 ====================
+const char* ssid = "这是245远程关灯喵";
+const char* password = "245666666";
+
+WebServer server(80);
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
+
+Servo myServo;
+
+// ==================== 2. 动作参数（彻底分开） ====================
+const int ANGLE_CENTER = 90;   // 待机中位
+
+// --- 开灯方向的角度（对应 /off 路径） ---
+const int ON_FIRST  = 80;      // 开灯：第一段轻轻碰一下
+const int ON_SECOND = 70;      // 开灯：极限推到底
+const int ON_BACK   = 80;      // 开灯：退回卸力的位置
+
+// --- 关灯方向的角度（对应 /on 路径） ---
+const int OFF_FIRST  = 100;    // 关灯：第一段轻轻碰一下
+const int OFF_SECOND = 110;    // 关灯：极限推到底
+const int OFF_BACK   = 100;    // 关灯：退回卸力的位置
+
+// --- 时间参数 ---
+const int GAP_TIME     = 800;  // 两段之间的停顿
+const int SHORT_TIME   = 100;  // 推到底极限位置的极短停顿
+const int HOLD_TIME    = 3000; // 退回安全位置的长延迟
+
+bool isBusy = false;           // 防连点标志位
+
+// ==================== 3. HTML 页面 ====================
+const char* page_html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='UTF-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>
+  <title>245宿舍关灯喵</title>
+  <style>
+    body { font-family: 'STKaiti', 'KaiTi', '楷体', sans-serif; background-color: #ffe4e9; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    h1 { color: #333; font-size: 28px; margin-bottom: 40px; letter-spacing: 2px; }
+    .btn { border: none; outline: none; color: white; font-size: 24px; font-family: inherit; padding: 15px 60px; margin: 15px 0; border-radius: 50px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: transform 0.1s, background-color 0.3s; }
+    .btn:active { transform: scale(0.95); }
+    .btn-on { background: linear-gradient(135deg, #ff9a9e 0%, #a18cd1 100%); }
+    .btn-off { background: linear-gradient(135deg, #a18cd1 0%, #ff9a9e 100%); }
+    .btn:disabled { background: #cccccc; box-shadow: none; cursor: not-allowed; transform: none; }
+  </style>
+  <script>
+    function sendCmd(url) {
+      document.getElementById('btn-on').disabled = true;
+      document.getElementById('btn-off').disabled = true;
+
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.send();
+
+      setTimeout(function() {
+        document.getElementById('btn-on').disabled = false;
+        document.getElementById('btn-off').disabled = false;
+      }, 6000);
+    }
+  </script>
+</head>
+<body>
+  <h1>关灯睡觉了喵</h1>
+  <button id='btn-on' class='btn btn-on' onclick="sendCmd('/off')">关 灯 喵</button>
+  <button id='btn-off' class='btn btn-off' onclick="sendCmd('/on')">开 灯 喵</button>
+</body>
+</html>
+)rawliteral";
+
+// ==================== 4. 动作函数 ====================
+void doTwoStage(int firstAngle, int secondAngle, int backAngle) {
+  isBusy = true;
+
+  myServo.write(firstAngle);    // 第一步：轻碰
+  delay(GAP_TIME);              
+
+  myServo.write(secondAngle);   // 第二步：推到底
+  delay(SHORT_TIME);            
+
+  myServo.write(backAngle);     // 第三步：退回卸力
+  delay(HOLD_TIME);             
+
+  myServo.write(ANGLE_CENTER);  // 第四步：回中位 90
+
+  isBusy = false;
+}
+
+// ==================== 5. 初始化 ====================
+void setup() {
+  Serial.begin(115200);
+
+  const int SERVO_PIN = 5; 
+  myServo.attach(SERVO_PIN);
+  myServo.write(ANGLE_CENTER);
+  delay(500);
+
+  WiFi.softAP(ssid, password);
+  Serial.println("WiFi 已启动");
+  Serial.print("ESP32 的 IP 地址是: ");
+  Serial.println(WiFi.softAPIP());
+
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+
+  server.on("/", []() {
+    server.send(200, "text/html", page_html);
+  });
+
+  //on关灯角度
+  server.on("/on", []() {
+    Serial.println("关灯喵");
+    if (!isBusy) {
+      doTwoStage(OFF_FIRST, OFF_SECOND, OFF_BACK);
+    } else {
+      Serial.println("正在执行上一个动作，忽略");
+    }
+    server.send(200, "text/plain", "OK");
+  });
+
+  //off开灯角度
+  server.on("/off", []() {
+    Serial.println("开灯喵");
+    if (!isBusy) {
+      doTwoStage(ON_FIRST, ON_SECOND, ON_BACK);
+    } else {
+      Serial.println("正在执行上一个动作，忽略");
+    }
+    server.send(200, "text/plain", "OK");
+  });
+
+  server.onNotFound([]() {
+    server.send(200, "text/html", page_html);
+  });
+
+  server.begin();
+  Serial.println("HTTP 服务器已启动，等待手机连接...");
+}
+
+// ==================== 6. 主循环 ====================
+void loop() {
+  dnsServer.processNextRequest();
+  server.handleClient();
+}
