@@ -94,6 +94,7 @@ void doTwoStage(int firstAngle, int secondAngle, int backAngle) {
 
 // ==================== 5. 初始化 ====================
 void setup() {
+  setCpuFrequencyMhz(80); // 把主频从默认的 240MHz 降到 80MHz
   Serial.begin(115200);
 
   const int SERVO_PIN = 5; 
@@ -102,6 +103,7 @@ void setup() {
   delay(500);
 
   WiFi.softAP(ssid, password);
+  WiFi.setSleep(true); 
   Serial.println("WiFi 已启动");
   Serial.print("ESP32 的 IP 地址是: ");
   Serial.println(WiFi.softAPIP());
@@ -111,7 +113,7 @@ void setup() {
   server.on("/", []() {
     server.send(200, "text/html", page_html);
   });
-
+  
   //on关灯角度
   server.on("/on", []() {
     Serial.println("关灯喵");
